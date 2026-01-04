@@ -1593,13 +1593,12 @@ def main():
         # Expander 4: Story Prompt (editable)
         with st.expander("Промпт історії (можна редагувати)", expanded=False):
             st.subheader("Промпт історії")
-
-        st.text_area(
-            "Шаблон промпту (можна редагувати)",
-            height=300,
-            help="Промпт для генерації історії (STORY_CORE вже підставлений)",
-            key="story_prompt_text"
-        )
+            st.text_area(
+                "Шаблон промпту (можна редагувати)",
+                height=300,
+                help="Промпт для генерації історії (STORY_CORE вже підставлений)",
+                key="story_prompt_text",
+            )
 
         # Debug panel
         with st.expander("Debug / Raw AI response", expanded=False):
@@ -1608,40 +1607,35 @@ def main():
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Model", LLM_MODEL)
-                st.metric("TARGET_LENGTH_CHARS",
-     st.session_state.debug_target_length_chars)
+                st.metric("TARGET_LENGTH_CHARS", st.session_state.debug_target_length_chars)
             with col2:
                 st.metric("Prompt chars", st.session_state.debug_prompt_chars)
-                st.metric("Story core chars",
-     st.session_state.debug_story_core_chars)
+                st.metric("Story core chars", st.session_state.debug_story_core_chars)
             with col3:
-                st.metric(
-    "Response chars",
-     st.session_state.debug_response_chars)
+                st.metric("Response chars", st.session_state.debug_response_chars)
                 if st.session_state.debug_error:
                     st.error(f"Error: {st.session_state.debug_error}")
 
             st.divider()
 
             st.subheader("Prompt Preview (first 800 chars)")
-            debug_last_prompt = st.session_state.get('debug_last_prompt', "")
+            debug_last_prompt = st.session_state.get("debug_last_prompt", "")
             st.text_area(
                 "Last prompt",
                 value=debug_last_prompt[:800] if debug_last_prompt else "",
                 height=150,
                 disabled=True,
-                key="debug_prompt_preview"
+                key="debug_prompt_preview",
             )
 
             st.subheader("Response Preview (first 2000 chars)")
-            debug_last_response = st.session_state.get(
-                'debug_last_response', "")
+            debug_last_response = st.session_state.get("debug_last_response", "")
             st.text_area(
                 "Last response",
                 value=debug_last_response[:2000] if debug_last_response else "",
                 height=200,
                 disabled=True,
-                key="debug_response_preview"
+                key="debug_response_preview",
             )
 
             with st.expander("Full Prompt", expanded=False):
@@ -1650,7 +1644,7 @@ def main():
                     value=debug_last_prompt,
                     height=300,
                     disabled=True,
-                    key="debug_prompt_full"
+                    key="debug_prompt_full",
                 )
 
             with st.expander("Full Response", expanded=False):
@@ -1659,251 +1653,264 @@ def main():
                     value=debug_last_response,
                     height=300,
                     disabled=True,
-                    key="debug_response_full"
+                    key="debug_response_full",
                 )
 
         col1, col2 = st.columns(2)
+
+        def _fill_story_prompt_for_send(prompt_template: str) -> str:
+            """Fill story prompt placeholders; fallback to manual replacement."""
+            try:
+                return fill_story_prompt(
+                    prompt_template,
+                    st.session_state.story_core_result,
+                    st.session_state.original_length_chars,
+                    None,  # No slide_count
+                )
+            except Exception:
+                prompt_to_send = prompt_template
+                if "{TARGET_LENGTH_CHARS}" in prompt_to_send:
+                    prompt_to_send = prompt_to_send.replace(
+                        "{TARGET_LENGTH_CHARS}", str(st.session_state.original_length_chars)
+                    )
+                prompt_to_send = re.sub(
+                    r"TARGET_LENGTH_CHARS:\s*\{[^}]*\}",
+                    f"TARGET_LENGTH_CHARS: {st.session_state.original_length_chars}",
+                    prompt_to_send,
+                )
+                prompt_to_send = re.sub(r"SLIDE_COUNT:\s*\{[^}]*\}", "", prompt_to_send)
+                prompt_to_send = prompt_to_send.replace("{SLIDE_COUNT}", "")
+                return prompt_to_send
+
+        def _warn_on_placeholders(prompt_to_send: str) -> None:
+            remaining_placeholders: list[str] = []
+            if "{TARGET_LENGTH_CHARS}" in prompt_to_send or re.search(
+                r"TARGET_LENGTH_CHARS:\s*\{", prompt_to_send
+            ):
+                remaining_placeholders.append("TARGET_LENGTH_CHARS")
+            if "{{STORY_CORE}}" in prompt_to_send or "{STORY_CORE}" in prompt_to_send:
+                remaining_placeholders.append("STORY_CORE")
+            if remaining_placeholders:
+                st.warning(
+                    "Увага: Плейсхолдери не замінені: "
+                    f"{', '.join(remaining_placeholders)}. Продовжую генерацію..."
+                )
+
+        def _is_llm_refusal(text: str | None) -> bool:
+            if not text:
+                return False
+            low = text.lower()
+            return ("i'm sorry" in text) or ("i can't assist" in low) or (
+                "cannot" in low and "assist" in low
+            )
+
         with col1:
             if st.button("Згенерувати історію", type="primary"):
                 if not st.session_state.story_prompt_text or not st.session_state.story_prompt_text.strip():
                     update_status(
-    "Помилка: промпт історії порожній",
-    "error",
-    "Згенерувати історію (expander)",
-     "")
-                    st.error(
-                        "Промпт порожній. Будь ласка, завантажте шаблон або введіть промпт.")
+                        "Помилка: промпт історії порожній",
+                        "error",
+                        "Згенерувати історію (expander)",
+                        "",
+                    )
+                    st.error("Промпт порожній. Будь ласка, завантажте шаблон або введіть промпт.")
                 elif not st.session_state.story_core_result or not st.session_state.story_core_result.strip():
                     update_status(
-    "Помилка: STORY_CORE не згенеровано",
-    "error",
-    "Згенерувати історію (expander)",
-     "")
-                    st.error(
-                        "STORY_CORE не згенеровано. Будь ласка, спочатку згенеруйте STORY_CORE.")
+                        "Помилка: STORY_CORE не згенеровано",
+                        "error",
+                        "Згенерувати історію (expander)",
+                        "",
+                    )
+                    st.error("STORY_CORE не згенеровано. Будь ласка, спочатку згенеруйте STORY_CORE.")
                 else:
+                    prompt_template = st.session_state.story_prompt_text
                     try:
                         with st.status("Генерую історію...", expanded=True) as status:
                             status.write("Крок 1/1: Генерація історії...")
-                                    # Get the prompt from textarea (already has STORY_CORE injected)
-                                    prompt_template = st.session_state.story_prompt_text
 
-                                    # Fill remaining placeholders (TARGET_LENGTH_CHARS only)
-                                    try:
-                                        prompt_to_send = fill_story_prompt(
-                                        prompt_template,
-                                        st.session_state.story_core_result,
-                                        st.session_state.original_length_chars,
-                                        None  # No slide_count
-                                )
-                                    except Exception as fill_error:
-                                        # If fill_story_prompt fails, try to fill manually
-                                        prompt_to_send = prompt_template
-                                        # Replace TARGET_LENGTH_CHARS if present
-                                        if "{TARGET_LENGTH_CHARS}" in prompt_to_send:
-                                            prompt_to_send = prompt_to_send.replace("{TARGET_LENGTH_CHARS}", str(st.session_state.original_length_chars))
-                                        # Replace TARGET_LENGTH_CHARS: {integer} pattern
-                                        prompt_to_send = re.sub(
-                                            r'TARGET_LENGTH_CHARS:\s*\{[^}]*\}',
-                                            f'TARGET_LENGTH_CHARS: {st.session_state.original_length_chars}',
-                                        prompt_to_send
-                                )
-                                    # Remove SLIDE_COUNT if present
-                                        prompt_to_send = re.sub(r'SLIDE_COUNT:\s*\{[^}]*\}', '', prompt_to_send)
-                                        prompt_to_send = prompt_to_send.replace("{SLIDE_COUNT}", "")
-
-                            # Check for remaining placeholders that might cause issues
-                                        remaining_placeholders = []
-                                        if "{TARGET_LENGTH_CHARS}" in prompt_to_send or re.search(r'TARGET_LENGTH_CHARS:\s*\{', prompt_to_send):
-                                            remaining_placeholders.append("TARGET_LENGTH_CHARS")
-                                        if "{{STORY_CORE}}" in prompt_to_send or "{STORY_CORE}" in prompt_to_send:
-                                            remaining_placeholders.append("STORY_CORE")
-
-                                        if remaining_placeholders:
-                                            st.warning(f"Увага: Плейсхолдери не замінені: {', '.join(remaining_placeholders)}. Продовжую генерацію...")
+                            prompt_to_send = _fill_story_prompt_for_send(prompt_template)
+                            _warn_on_placeholders(prompt_to_send)
 
                             # Store debug info before calling LLM
-                                        st.session_state.debug_last_prompt = prompt_to_send
-                                        st.session_state.debug_prompt_chars = len(prompt_to_send)
-                                        st.session_state.debug_story_core_chars = len(st.session_state.story_core_result) if st.session_state.story_core_result else 0
-                                        st.session_state.debug_target_length_chars = st.session_state.original_length_chars
+                            st.session_state.debug_last_prompt = prompt_to_send
+                            st.session_state.debug_prompt_chars = len(prompt_to_send)
+                            st.session_state.debug_story_core_chars = (
+                                len(st.session_state.story_core_result)
+                                if st.session_state.story_core_result
+                                else 0
+                            )
+                            st.session_state.debug_target_length_chars = (
+                                st.session_state.original_length_chars
+                            )
 
-                            # Call LLM with the fully filled prompt
-                                        from services.llm_client import generate_text
-                                        story_output = generate_text(prompt_to_send)
+                            from services.llm_client import generate_text
+                            try:
+                                story_output = generate_text(prompt_to_send)
+                                st.session_state.debug_error = None
+                            except Exception as e:
+                                st.session_state.debug_error = str(e)
+                                raise
 
                             # Store debug info after LLM call
-                                        st.session_state.debug_last_response = story_output
-                                        st.session_state.debug_response_chars = len(story_output) if story_output else 0
+                            st.session_state.debug_last_response = story_output
+                            st.session_state.debug_response_chars = (
+                                len(story_output) if story_output else 0
+                            )
 
-                                    # Check if the response is a refusal
-                                    if story_output and ("I'm sorry" in story_output or "I can't assist" in story_output.lower()
-                                                         or "cannot" in story_output.lower() and "assist" in story_output.lower()):
-                                                             status.update(label="Помилка: LLM відмовився", state="error")
-                                        update_status("LLM відмовився генерувати контент", "error", "Згенерувати історію (expander)", "")
-                                        st.error("LLM відмовився генерувати контент. Можливі причини:\n"
-                                                 "- Промпт містить незамінені плейсхолдери\n"
-                                                 "- Контент порушує політику OpenAI\n"
-                                                 "- Промпт занадто складний або незрозумілий\n\n"
-                                                 f"Відповідь LLM: {story_output[:200]}...")
-                                        st.session_state.story_result_pending = story_output
-                                        st.session_state.story_prompt_filled = prompt_to_send
-                                        st.rerun()
-                                    else:
-                                        st.session_state.story_result_pending = story_output
-                                        st.session_state.generated_story = story_output
-                                        st.session_state.story_result = story_output
-                                        st.session_state.story_result_pending = None
-                                        st.session_state.story_prompt_filled = prompt_to_send
-                                        status.update(label="Історія згенерована ✅", state="complete")
-                                        update_status("Історію згенеровано успішно!", "success", "Згенерувати історію (expander)", "Історія згенерована")
-                                        try:
-                                            st.toast("Готово: Історія згенерована!", icon="✅")
-                                        except:
-                                            pass
-                                        st.rerun()
-                        except:
-                            with st.spinner("Генерація історії..."):
-                                prompt_template = st.session_state.story_prompt_text
-                                try:
-                                    prompt_to_send = fill_story_prompt(
-                                        prompt_template,
-                                        st.session_state.story_core_result,
-                                        st.session_state.original_length_chars,
-                                        None
-                                    )
-                                except Exception:
-                                    prompt_to_send = prompt_template
-                                        if "{TARGET_LENGTH_CHARS}" in prompt_to_send:
-                                            prompt_to_send = prompt_to_send.replace("{TARGET_LENGTH_CHARS}", str(st.session_state.original_length_chars))
-                                        prompt_to_send = re.sub(
-                                            r'TARGET_LENGTH_CHARS:\s*\{[^}]*\}',
-                                            f'TARGET_LENGTH_CHARS: {st.session_state.original_length_chars}',
-                                            prompt_to_send
-                                        )
-                                        prompt_to_send = re.sub(r'SLIDE_COUNT:\s*\{[^}]*\}', '', prompt_to_send)
-                                        prompt_to_send = prompt_to_send.replace("{SLIDE_COUNT}", "")
-                                    
-                                        from services.llm_client import generate_text
-                                        story_output = generate_text(prompt_to_send)
-                                        st.session_state.story_result_pending = story_output
-                                        st.session_state.generated_story = story_output
-                                        st.session_state.story_result = story_output
-                                        st.session_state.story_result_pending = None
-                                        st.session_state.story_prompt_filled = prompt_to_send
-                                        update_status("Історію згенеровано успішно!", "success", "Згенерувати історію (expander)", "Історія згенерована")
-                                        try:
-                                            st.toast("Готово: Історія згенерована!", icon="✅")
-                                        except:
-                                            pass
-                                        st.rerun()
-                                except ValueError as e:
-                                    update_status(f"Помилка: {str(e)}", "error", "Згенерувати історію (expander)", "")
-                                    st.error(f"Помилка: {str(e)}")
-                                except Exception as e:
-                                    update_status(f"Помилка генерації: {str(e)}", "error", "Згенерувати історію (expander)", "")
-                                    st.error(f"Помилка генерації: {str(e)}")
-                                    import traceback
-                                    st.code(traceback.format_exc())
-            
-            with col2:
-                if st.button("Перегенерувати історію (з поточним промптом)"):
-                    if not st.session_state.story_prompt_text or not st.session_state.story_prompt_text.strip():
-                        st.error("Промпт порожній. Будь ласка, завантажте шаблон або введіть промпт.")
-                    else:
-                        try:
-                            with st.spinner("Перегенерація історії..."):
-                                # Get the prompt from textarea (already has STORY_CORE injected)
-                                prompt_template = st.session_state.story_prompt_text
-                            
-                                # Fill remaining placeholders (TARGET_LENGTH_CHARS only)
-                                try:
-                                    prompt_to_send = fill_story_prompt(
-                                    prompt_template,
-                                    st.session_state.story_core_result if st.session_state.story_core_result else "",
-                                    st.session_state.original_length_chars,
-                                    None  # No slide_count
+                            if _is_llm_refusal(story_output):
+                                status.update(label="Помилка: LLM відмовився", state="error")
+                                update_status(
+                                    "LLM відмовився генерувати контент",
+                                    "error",
+                                    "Згенерувати історію (expander)",
+                                    "",
                                 )
-                                except Exception as fill_error:
-                                    # If fill_story_prompt fails, try to fill manually
-                                prompt_to_send = prompt_template
-                                # Replace TARGET_LENGTH_CHARS if present
-                                if "{TARGET_LENGTH_CHARS}" in prompt_to_send:
-                                    prompt_to_send = prompt_to_send.replace("{TARGET_LENGTH_CHARS}", str(st.session_state.original_length_chars))
-                                # Replace TARGET_LENGTH_CHARS: {integer} pattern
-                                prompt_to_send = re.sub(
-                                    r'TARGET_LENGTH_CHARS:\s*\{[^}]*\}',
-                                    f'TARGET_LENGTH_CHARS: {st.session_state.original_length_chars}',
-                                    prompt_to_send
+                                st.error(
+                                    "LLM відмовився генерувати контент. Можливі причини:\n"
+                                    "- Промпт містить незамінені плейсхолдери\n"
+                                    "- Контент порушує політику OpenAI\n"
+                                    "- Промпт занадто складний або незрозумілий\n\n"
+                                    f"Відповідь LLM: {story_output[:200]}..."
                                 )
-                                # Remove SLIDE_COUNT if present
-                                prompt_to_send = re.sub(r'SLIDE_COUNT:\s*\{[^}]*\}', '', prompt_to_send)
-                                prompt_to_send = prompt_to_send.replace("{SLIDE_COUNT}", "")
-                            
-                                # Check for remaining placeholders that might cause issues
-                                remaining_placeholders = []
-                                if "{TARGET_LENGTH_CHARS}" in prompt_to_send or re.search(r'TARGET_LENGTH_CHARS:\s*\{', prompt_to_send):
-                                    remaining_placeholders.append("TARGET_LENGTH_CHARS")
-                                if "{{STORY_CORE}}" in prompt_to_send or "{STORY_CORE}" in prompt_to_send:
-                                    remaining_placeholders.append("STORY_CORE")
-                            
-                                if remaining_placeholders:
-                                    st.warning(f"Увага: Плейсхолдери не замінені: {', '.join(remaining_placeholders)}. Продовжую генерацію...")
-                            
-                                # Store debug info before calling LLM
-                                st.session_state.debug_last_prompt = prompt_to_send
-                                st.session_state.debug_prompt_chars = len(prompt_to_send)
-                                st.session_state.debug_story_core_chars = len(st.session_state.story_core_result) if st.session_state.story_core_result else 0
-                                st.session_state.debug_target_length_chars = st.session_state.original_length_chars
-                            
-                                # Call LLM with the fully filled prompt
-                                from services.llm_client import generate_text
-                                try:
-                                    story_output = generate_text(prompt_to_send)
-                                st.session_state.debug_error = None
-                                except Exception as e:
-                                    st.session_state.debug_error = str(e)
-                                raise
-                            
-                                # Store debug info after LLM call
-                                st.session_state.debug_last_response = story_output
-                                st.session_state.debug_response_chars = len(story_output) if story_output else 0
-                            
-                                # Check if the response is a refusal
-                                if story_output and ("I'm sorry" in story_output or "I can't assist" in story_output.lower() or "cannot" in story_output.lower() and "assist" in story_output.lower()):
-                                    st.error("LLM відмовився генерувати контент. Можливі причини:\n"
-                                        "- Промпт містить незамінені плейсхолдери\n"
-                                        "- Контент порушує політику OpenAI\n"
-                                        "- Промпт занадто складний або незрозумілий\n\n"
-                                        f"Відповідь LLM: {story_output[:200]}...")
-                                # Store the error response anyway for debugging
                                 st.session_state.story_result_pending = story_output
                                 st.session_state.story_prompt_filled = prompt_to_send
                                 st.rerun()
-                                else:
-                                    # Store in pending (will be applied on next rerun before widget creation)
+                            else:
+                                st.session_state.story_result_pending = story_output
+                                st.session_state.generated_story = story_output
+                                st.session_state.story_result = story_output
+                                st.session_state.story_result_pending = None
+                                st.session_state.story_prompt_filled = prompt_to_send
+                                status.update(label="Історія згенерована ✅", state="complete")
+                                update_status(
+                                    "Історію згенеровано успішно!",
+                                    "success",
+                                    "Згенерувати історію (expander)",
+                                    "Історія згенерована",
+                                )
+                                try:
+                                    st.toast("Готово: Історія згенерована!", icon="✅")
+                                except Exception:
+                                    pass
+                                st.rerun()
+                    except Exception as e:
+                        # Fallback path if st.status isn't available or if it fails
+                        with st.spinner("Генерація історії..."):
+                            try:
+                                prompt_to_send = _fill_story_prompt_for_send(prompt_template)
+                                _warn_on_placeholders(prompt_to_send)
+
+                                from services.llm_client import generate_text
+                                story_output = generate_text(prompt_to_send)
+
+                                st.session_state.story_result_pending = story_output
+                                st.session_state.generated_story = story_output
+                                st.session_state.story_result = story_output
+                                st.session_state.story_result_pending = None
+                                st.session_state.story_prompt_filled = prompt_to_send
+                                update_status(
+                                    "Історію згенеровано успішно!",
+                                    "success",
+                                    "Згенерувати історію (expander)",
+                                    "Історія згенерована",
+                                )
+                                try:
+                                    st.toast("Готово: Історія згенерована!", icon="✅")
+                                except Exception:
+                                    pass
+                                st.rerun()
+                            except ValueError as ve:
+                                update_status(
+                                    f"Помилка: {str(ve)}",
+                                    "error",
+                                    "Згенерувати історію (expander)",
+                                    "",
+                                )
+                                st.error(f"Помилка: {str(ve)}")
+                            except Exception as ge:
+                                update_status(
+                                    f"Помилка генерації: {str(ge)}",
+                                    "error",
+                                    "Згенерувати історію (expander)",
+                                    "",
+                                )
+                                st.error(f"Помилка генерації: {str(ge)}")
+                                import traceback
+
+                                st.code(traceback.format_exc())
+
+        with col2:
+            if st.button("Перегенерувати історію (з поточним промптом)"):
+                if not st.session_state.story_prompt_text or not st.session_state.story_prompt_text.strip():
+                    st.error("Промпт порожній. Будь ласка, завантажте шаблон або введіть промпт.")
+                else:
+                    try:
+                        with st.spinner("Перегенерація історії..."):
+                            prompt_template = st.session_state.story_prompt_text
+                            prompt_to_send = _fill_story_prompt_for_send(prompt_template)
+                            _warn_on_placeholders(prompt_to_send)
+
+                            st.session_state.debug_last_prompt = prompt_to_send
+                            st.session_state.debug_prompt_chars = len(prompt_to_send)
+                            st.session_state.debug_story_core_chars = (
+                                len(st.session_state.story_core_result)
+                                if st.session_state.story_core_result
+                                else 0
+                            )
+                            st.session_state.debug_target_length_chars = (
+                                st.session_state.original_length_chars
+                            )
+
+                            from services.llm_client import generate_text
+                            try:
+                                story_output = generate_text(prompt_to_send)
+                                st.session_state.debug_error = None
+                            except Exception as e:
+                                st.session_state.debug_error = str(e)
+                                raise
+
+                            st.session_state.debug_last_response = story_output
+                            st.session_state.debug_response_chars = (
+                                len(story_output) if story_output else 0
+                            )
+
+                            if _is_llm_refusal(story_output):
+                                st.error(
+                                    "LLM відмовився генерувати контент. Можливі причини:\n"
+                                    "- Промпт містить незамінені плейсхолдери\n"
+                                    "- Контент порушує політику OpenAI\n"
+                                    "- Промпт занадто складний або незрозумілий\n\n"
+                                    f"Відповідь LLM: {story_output[:200]}..."
+                                )
+                                st.session_state.story_result_pending = story_output
+                                st.session_state.story_prompt_filled = prompt_to_send
+                                st.rerun()
+                            else:
                                 st.session_state.story_result_pending = story_output
                                 st.session_state.story_prompt_filled = prompt_to_send
                                 st.success("Історію перегенеровано успішно!")
                                 st.rerun()
-                                except ValueError as e:
-                                    st.error(f"Помилка: {str(e)}")
-                                    except Exception as e:
-                                        st.error(f"Помилка генерації: {str(e)}")
-                                import traceback
-                                st.code(traceback.format_exc())
-    
-                                # Expander 5: Story Result (auto-expands when story exists)
-        has_story = bool(st.session_state.get("generated_story") or st.session_state.get("story_result"))
+                    except ValueError as ve:
+                        st.error(f"Помилка: {str(ve)}")
+                    except Exception as ge:
+                        st.error(f"Помилка генерації: {str(ge)}")
+                        import traceback
+
+                        st.code(traceback.format_exc())
+
+        # Expander 5: Story Result (auto-expands when story exists)
+        has_story = bool(
+            st.session_state.get("generated_story") or st.session_state.get("story_result")
+        )
         with st.expander("Результат історії", expanded=has_story):
             st.subheader("Результат історії")
             st.text_area(
                 "Згенерована історія",
                 height=300,
                 help="Результат генерації історії (можна редагувати)",
-                key="generated_story"
+                key="generated_story",
             )
-            
+
             # Add code block for easy copying
             st.code(st.session_state.generated_story or "", language=None)
     
